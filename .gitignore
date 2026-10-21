@@ -1,0 +1,26 @@
+# Relatórios Confidenciais (Armazenados no Google Drive institucional)
+setores/
+guia_metodologico_e_feedback_humano.html
+relatorio_consolidado_pdi.html
+
+# Backend Google Apps Script (gerenciado localmente via clasp)
+backend-gas/
+.claspignore
+
+# Testes de desenvolvimento locais
+tests/
+
+# Documentos operacionais internos e especificações arquiteturais
+MANUAL_OPERACIONAL.md
+docs/
+.superpowers/
+
+# Credenciais e arquivos locais do clasp
+.clasp.json
+.clasprc.json
+
+# Logs e dependências de ambiente
+*.log
+node_modules/
+.DS_Store
+Thumbs.db

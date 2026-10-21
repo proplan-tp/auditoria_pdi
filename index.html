@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal de Auditoria PDI 2026–2029</title>
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Estilos do Portal (Institutional Intelligence System) -->
+  <link rel="stylesheet" href="assets/css/portal.css">
+
+  <!-- Google Identity Services SDK -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+
+  <!-- ======================================================================
+       1. Gate de Autenticação / Tela de Login
+       ====================================================================== -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-badge">PDI 2026–2029</div>
+      <h1 class="login-title">Portal de Auditoria do PDI</h1>
+      <p class="login-subtitle">Acesso exclusivo para auditores e gestores setoriais identificados.</p>
+
+      <!-- Botão Oficial do Google Identity Services -->
+      <div id="gisButtonDiv" class="login-gis-container"></div>
+
+      <!-- Alerta de Conta Não Autorizada -->
+      <div id="authAlertError" class="auth-alert-error" role="alert">
+        <p id="errorMessage">Acesso não autorizado.</p>
+        <button id="btnRetryAccount" class="btn-retry-account">Tentar com outra conta</button>
+      </div>
+
+      <div class="login-footer-text">
+        🔒 Autenticação integrada à conta Google institucional da universidade.
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================
+       2. Portal Hub (Exibido após autenticação autorizada)
+       ====================================================================== -->
+  <div id="portalContainer" class="portal-container" style="display: none;">
+    
+    <!-- Topbar -->
+    <header class="portal-topbar">
+      <div class="topbar-left">
+        <button id="btnHamburger" class="btn-hamburger" title="Alternar Menu" aria-label="Alternar Menu">☰</button>
+        <div class="topbar-brand" id="topbarBrand">PDI 2026–2029 — Auditoria</div>
+        <span id="badgeRole" class="badge-role"></span>
+      </div>
+
+      <div class="topbar-right">
+        <span id="userEmailDisplay" class="user-email-text"></span>
+        <button id="btnFullscreen" class="btn-icon-action" title="Tela Cheia" aria-label="Tela Cheia">⛶ Tela Cheia</button>
+        <button id="btnLogout" class="btn-icon-action" title="Encerrar Sessão" aria-label="Encerrar Sessão">🚪 Sair</button>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="portal-main">
+      
+      <!-- Backdrop para Mobile -->
+      <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+
+      <!-- Sidebar -->
+      <nav id="portalSidebar" class="portal-sidebar" aria-label="Navegação de Relatórios">
+        <div id="sidebarNavContainer"></div>
+      </nav>
+
+      <!-- Visualizador -->
+      <main class="viewer-container">
+        
+        <!-- Spinner de Carregamento -->
+        <div id="viewerLoading" class="viewer-loading-spinner">
+          <div class="spinner"></div>
+          <span style="font-size: 13px; color: var(--color-text-muted); font-weight: 500;">Carregando relatório seguro...</span>
+        </div>
+
+        <!-- Iframe de Visualização dos Relatórios -->
+        <iframe
+          id="viewerIframe"
+          class="viewer-iframe"
+          title="Relatório de Auditoria"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        ></iframe>
+      </main>
+
+    </div>
+  </div>
+
+  <!-- Scripts da Aplicação -->
+  <script src="config.js"></script>
+  <script src="assets/js/portal.js"></script>
+</body>
+</html>
