@@ -5,10 +5,10 @@
 const APP_CONFIG = {
   // Google OAuth 2.0 Web Client ID cadastrado no Google Cloud Console
   // com a origem autorizada https://seu-usuario.github.io
-  googleClientId: "COLOQUE_SEU_GOOGLE_CLIENT_ID_AQUI.apps.googleusercontent.com",
+  googleClientId: "1030162673436-12chjcu4mpa22o4rt2tl9mira2668dfq.apps.googleusercontent.com",
 
   // URL do WebApp do Google Apps Script publicado com 'Executar como eu' e 'Qualquer pessoa'
-  webAppUrl: "COLOQUE_AQUI_A_URL_DO_WEBAPP_APPS_SCRIPT/exec"
+  webAppUrl: "https://script.google.com/macros/s/AKfycbwe17PSGD5qWl2PhIajjxLpJ3wQuIp1wYDJeDnEPFd2hbv0ZeVUvUmLtA2CVLbVb0FOog/exec"
 };
 
 if (typeof window !== "undefined") {
