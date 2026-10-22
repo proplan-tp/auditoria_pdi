@@ -16,9 +16,97 @@
       userEmail: null,
       role: null,
       sector: null,
+      allowedReports: [],
       reportsCache: {}, // { reportKey: { title, html } }
       currentReportKey: null
     };
+
+    const KNOWN_REPORTS = [
+      'CONSOLIDADO', 'METODOLOGIA',
+      'CDBEA', 'CIEFAM', 'COBIB', 'CPA', 'CPPTA', 'CTIC',
+      'INOVATEC', 'JBOT', 'OUVIDORIA', 'PROAD', 'PROCULT',
+      'PROEAD', 'PROEST', 'PROEX', 'PROGEP', 'PROGRAD',
+      'PROINFRA', 'PROPLAN', 'PRPGP'
+    ];
+
+    function isValidReportKey(key) {
+      if (!key || typeof key !== 'string') return false;
+      const upper = key.trim().toUpperCase();
+      if (state.allowedReports && state.allowedReports.length > 0) {
+        return state.allowedReports.some(r => {
+          const reportCode = typeof r === 'string' ? r : (r && r.key);
+          return reportCode && reportCode.toUpperCase() === upper;
+        });
+      }
+      return KNOWN_REPORTS.includes(upper);
+    }
+
+    function extractReportKey(href) {
+      if (!href || typeof href !== 'string') return null;
+      const trimmed = href.trim();
+
+      // 1. Caso hash ou query: #setor=CDBEA, ?setor=CDBEA, #report=CDBEA, #CDBEA
+      const hashParamMatch = trimmed.match(/[#?&](?:setor|sector|report)=([A-Za-z0-9_-]+)/i);
+      if (hashParamMatch) {
+        return hashParamMatch[1].toUpperCase();
+      }
+      const directHashMatch = trimmed.match(/^#([A-Za-z0-9_-]+)$/);
+      if (directHashMatch) {
+        const candidate = directHashMatch[1].toUpperCase();
+        if (isValidReportKey(candidate)) return candidate;
+      }
+
+      // 2. Caso caminho relativo ou absoluto para HTML: ../feedbacks/CDBEA.html, feedbacks/CDBEA.html, CDBEA.html
+      const fileMatch = trimmed.match(/(?:^|\/|\.\.\/)?(?:feedbacks\/)?([A-Za-z0-9_-]+)\.html(?:[?#].*)?$/i);
+      if (fileMatch) {
+        const candidate = fileMatch[1].toUpperCase();
+        if (candidate !== 'INDEX' && candidate !== 'LOGIN' && candidate !== '404') {
+          return candidate;
+        }
+      }
+
+      return null;
+    }
+
+    function attachIframeClickInterceptor() {
+      if (!elements.viewerIframe) return;
+      try {
+        const iframeDoc = elements.viewerIframe.contentDocument ||
+          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document);
+        if (!iframeDoc || !iframeDoc.body) return;
+
+        if (iframeDoc._pdiInterceptorBound) return;
+        iframeDoc._pdiInterceptorBound = true;
+
+        iframeDoc.body.addEventListener('click', (e) => {
+          const link = e.target && e.target.closest ? e.target.closest('a') : null;
+          if (!link) return;
+
+          const explicitKey = (link.dataset && (link.dataset.reportKey || link.dataset.sector)) || '';
+          const keyFromHref = extractReportKey(link.getAttribute('href') || '');
+          const targetKey = (explicitKey || keyFromHref || '').toUpperCase();
+
+          if (targetKey && isValidReportKey(targetKey)) {
+            e.preventDefault();
+            e.stopPropagation();
+            switchReport(targetKey);
+          }
+        }, true);
+      } catch (err) {
+        // Fallback silencioso caso haja restrição de cross-origin sandbox
+      }
+    }
+
+    function handleWindowMessage(event) {
+      if (!event || !event.data) return;
+      const data = event.data;
+      if (data.type === 'pdi:navigate' || data.action === 'switchReport') {
+        const key = data.reportKey || data.sector || data.key;
+        if (key && isValidReportKey(key)) {
+          switchReport(key.toUpperCase());
+        }
+      }
+    }
 
     // Elementos do DOM
     const elements = {
@@ -69,6 +157,25 @@
           }
           handleLogout();
         });
+      }
+
+      // Sincronização de navegação pelo histórico (botão Voltar/Avançar do navegador)
+      if (win && win.addEventListener) {
+        win.addEventListener('popstate', () => {
+          if (!win.location || !state.idToken) return;
+          const hashCandidate = (win.location.hash || '').replace(/^#/, '').toUpperCase();
+          if (hashCandidate && isValidReportKey(hashCandidate) && hashCandidate !== state.currentReportKey) {
+            switchReport(hashCandidate);
+          }
+        });
+
+        // Recepção de mensagens do iframe para troca de relatório
+        win.addEventListener('message', handleWindowMessage);
+      }
+
+      // Interceptor de cliques no iframe para direcionar links internos ao SPA
+      if (elements.viewerIframe && elements.viewerIframe.addEventListener) {
+        elements.viewerIframe.addEventListener('load', attachIframeClickInterceptor);
       }
     }
 
@@ -129,12 +236,20 @@
       }
 
       try {
+        let requestedKey = 'INIT';
+        if (win && win.location && win.location.hash) {
+          const hashCandidate = win.location.hash.replace(/^#/, '').toUpperCase();
+          if (isValidReportKey(hashCandidate)) {
+            requestedKey = hashCandidate;
+          }
+        }
+
         const fetchFn = (win && win.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
         const webUrl = appConfig ? appConfig.webAppUrl : '';
         const response = await fetchFn(webUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ idToken: state.idToken, reportKey: 'INIT' })
+          body: JSON.stringify({ idToken: state.idToken, reportKey: requestedKey })
         });
 
         const data = await response.json();
@@ -152,7 +267,13 @@
         state.userEmail = data.email;
         state.role = data.role;
         state.sector = data.sector;
+        state.allowedReports = data.allowedReports || [];
         state.currentReportKey = data.currentReport;
+
+        // Sincroniza hash inicial no navegador se aplicável
+        if (win && win.location && win.history && win.history.replaceState) {
+          win.history.replaceState({ reportKey: data.currentReport }, '', '#' + data.currentReport);
+        }
 
         // Armazena em cache o relatório inicial recebido
         state.reportsCache[data.currentReport] = {
@@ -238,22 +359,37 @@
     }
 
     async function switchReport(reportKey) {
-      if (state.currentReportKey === reportKey && state.reportsCache[reportKey]) return;
+      if (!reportKey) return;
+      const normalizedKey = reportKey.toUpperCase();
+
+      if (state.currentReportKey === normalizedKey && state.reportsCache[normalizedKey]) return;
 
       // Atualiza classe ativa na sidebar
       if (elements.sidebarNavContainer) {
         const items = elements.sidebarNavContainer.querySelectorAll('.nav-item');
         items.forEach(el => {
           if (el.dataset && el.dataset.reportKey) {
-            el.classList.toggle('active', el.dataset.reportKey === reportKey);
+            el.classList.toggle('active', el.dataset.reportKey === normalizedKey);
           }
         });
       }
 
-      state.currentReportKey = reportKey;
+      state.currentReportKey = normalizedKey;
 
-      if (state.reportsCache[reportKey]) {
-        renderReportInViewer(reportKey);
+      // Sincroniza hash na barra de endereço (permite deep-link e botão Voltar)
+      if (win && win.location) {
+        const targetHash = '#' + normalizedKey;
+        if (win.location.hash !== targetHash) {
+          if (win.history && win.history.pushState) {
+            win.history.pushState({ reportKey: normalizedKey }, '', targetHash);
+          } else {
+            win.location.hash = targetHash;
+          }
+        }
+      }
+
+      if (state.reportsCache[normalizedKey]) {
+        renderReportInViewer(normalizedKey);
         return;
       }
 
@@ -265,7 +401,7 @@
         const res = await fetchFn(webUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ idToken: state.idToken, reportKey: reportKey })
+          body: JSON.stringify({ idToken: state.idToken, reportKey: normalizedKey })
         });
         const data = await res.json();
         if (!data.success) {
@@ -275,12 +411,12 @@
           return;
         }
 
-        state.reportsCache[reportKey] = {
+        state.reportsCache[normalizedKey] = {
           title: data.reportTitle,
           html: data.html
         };
 
-        renderReportInViewer(reportKey);
+        renderReportInViewer(normalizedKey);
 
       } catch (err) {
         const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
@@ -296,6 +432,7 @@
 
       if (elements.viewerIframe) {
         elements.viewerIframe.srcdoc = reportData.html;
+        setTimeout(attachIframeClickInterceptor, 50);
       }
       setLoading(false);
     }
@@ -308,10 +445,14 @@
       state.userEmail = null;
       state.role = null;
       state.sector = null;
+      state.allowedReports = [];
       state.reportsCache = {};
       state.currentReportKey = null;
       if (elements.viewerIframe) {
         elements.viewerIframe.srcdoc = '';
+      }
+      if (win && win.location && win.history && win.history.replaceState) {
+        win.history.replaceState(null, '', (win.location.pathname || '') + (win.location.search || ''));
       }
       showLoginScreen();
     }
@@ -385,7 +526,11 @@
       setLoading,
       toggleMobileSidebar,
       closeMobileSidebar,
-      toggleFullscreen
+      toggleFullscreen,
+      extractReportKey,
+      isValidReportKey,
+      handleWindowMessage,
+      attachIframeClickInterceptor
     };
   }
 
