@@ -215,9 +215,9 @@
         win.addEventListener('message', handleWindowMessage);
       }
 
-      // Interceptor de cliques no iframe para direcionar links internos ao SPA
+      // Listener de carregamento do iframe para interceptar links e hidratar tabela
       if (elements.viewerIframe && elements.viewerIframe.addEventListener) {
-        elements.viewerIframe.addEventListener('load', attachIframeClickInterceptor);
+        elements.viewerIframe.addEventListener('load', onViewerIframeLoaded);
       }
     }
 
@@ -475,27 +475,43 @@
       }
     }
 
+    async function onViewerIframeLoaded(forcedKey) {
+      attachIframeClickInterceptor();
+      const currentKey = (forcedKey || state.currentReportKey || '').toUpperCase();
+      if (currentKey === 'CONSOLIDADO') {
+        const iframeDoc = elements.viewerIframe ? (
+          elements.viewerIframe.contentDocument ||
+          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+        ) : null;
+        if (iframeDoc) {
+          if (state.role === 'admin') {
+            await fetchAssignments();
+          }
+          hydrateConsolidatedTable(iframeDoc, state.assignments);
+        }
+      }
+    }
+
     function renderReportInViewer(reportKey) {
+      if (reportKey) {
+        state.currentReportKey = reportKey.toUpperCase();
+      }
       const reportData = state.reportsCache[reportKey];
       if (!reportData) return;
 
       if (elements.viewerIframe) {
         elements.viewerIframe.srcdoc = reportData.html;
-        setTimeout(attachIframeClickInterceptor, 50);
 
+        // Disparo assíncrono programado de contingência
         if (reportKey === 'CONSOLIDADO') {
           setTimeout(async () => {
-            const iframeDoc = elements.viewerIframe ? (
-              elements.viewerIframe.contentDocument ||
-              (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
-            ) : null;
-            if (iframeDoc) {
-              if (state.role === 'admin') {
-                await fetchAssignments();
-              }
-              hydrateConsolidatedTable(iframeDoc, state.assignments);
-            }
+            await onViewerIframeLoaded('CONSOLIDADO');
           }, 60);
+          setTimeout(async () => {
+            await onViewerIframeLoaded('CONSOLIDADO');
+          }, 250);
+        } else {
+          setTimeout(attachIframeClickInterceptor, 50);
         }
       }
       setLoading(false);
@@ -645,20 +661,22 @@
         if (!setor) return;
 
         const info = currentAssignments[setor];
-        const revisor = (info && info.revisor) ? info.revisor : '—';
-        const assignedBy = (info && info.assignedBy) ? info.assignedBy : '—';
-        const status = (info && info.status) ? info.status : 'PENDENTE';
-
         const revCell = row.querySelector ? row.querySelector('[data-cell="revisor"]') : null;
-        if (revCell) revCell.textContent = revisor;
-
         const byCell = row.querySelector ? row.querySelector('[data-cell="atribuido-por"]') : null;
-        if (byCell) byCell.textContent = assignedBy;
-
         const statusCell = row.querySelector ? row.querySelector('[data-cell="status"]') : null;
-        if (statusCell) {
-          statusCell.innerHTML = renderStatusBadge(status);
+
+        if (info) {
+          if (revCell) revCell.textContent = info.revisor || '—';
+          if (byCell) byCell.textContent = info.assignedBy || '—';
+          if (statusCell) {
+            statusCell.innerHTML = renderStatusBadge(info.status);
+          }
         }
+
+        const effectiveRevisor = (info && info.revisor && info.revisor !== '—')
+          ? info.revisor
+          : (revCell && revCell.textContent && revCell.textContent.trim() !== '—' ? revCell.textContent.trim() : '');
+        const hasAssignment = !!effectiveRevisor;
 
         // Se o usuário autenticado for admin, injeta botão interativo no slot da ação
         if (state.role === 'admin') {
@@ -669,7 +687,6 @@
           ) : null;
 
           if (slot) {
-            const hasAssignment = !!(info && info.revisor);
             slot.innerHTML = '';
             const btn = (iframeDoc && iframeDoc.createElement)
               ? iframeDoc.createElement('button')
@@ -697,11 +714,37 @@
         elements.assignSectorName.textContent = setor;
       }
       const current = (state.assignments && state.assignments[setor]) || {};
+      let revisorVal = current.revisor || '';
+      let statusVal = current.status || '';
+
+      if (!revisorVal || !statusVal) {
+        const iframeDoc = elements.viewerIframe ? (
+          elements.viewerIframe.contentDocument ||
+          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+        ) : null;
+        if (iframeDoc && typeof iframeDoc.querySelector === 'function') {
+          const row = iframeDoc.querySelector('tr[data-setor="' + setor + '"]');
+          if (row) {
+            const revCell = row.querySelector('[data-cell="revisor"]');
+            if (!revisorVal && revCell && revCell.textContent && revCell.textContent.trim() !== '—') {
+              revisorVal = revCell.textContent.trim();
+            }
+            const statusCell = row.querySelector('[data-cell="status"]');
+            if (!statusVal && statusCell) {
+              const text = statusCell.textContent.trim().toUpperCase();
+              if (text.includes('CONCLU')) statusVal = 'CONCLUIDO';
+              else if (text.includes('VALIDA')) statusVal = 'EM_VALIDACAO';
+              else if (text.includes('REVIS')) statusVal = 'EM_REVISAO';
+            }
+          }
+        }
+      }
+
       if (elements.assignRevisorInput) {
-        elements.assignRevisorInput.value = current.revisor || '';
+        elements.assignRevisorInput.value = revisorVal || '';
       }
       if (elements.assignStatusSelect) {
-        elements.assignStatusSelect.value = current.status || 'PENDENTE';
+        elements.assignStatusSelect.value = statusVal || 'PENDENTE';
       }
       if (elements.assignModal) {
         elements.assignModal.style.display = 'flex';
@@ -786,8 +829,9 @@
         }
         if (data && data.success && data.assignments) {
           state.assignments = data.assignments;
+          state.assignments[setor] = { revisor: '—', status: 'PENDENTE', assignedBy: '—' };
         } else if (data && data.success && state.assignments) {
-          delete state.assignments[setor];
+          state.assignments[setor] = { revisor: '—', status: 'PENDENTE', assignedBy: '—' };
         }
       } catch (err) {
         const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
