@@ -8,6 +8,7 @@
     const doc = context.document || (typeof document !== 'undefined' ? document : null);
     const win = context.window || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
     const storage = context.sessionStorage || (typeof sessionStorage !== 'undefined' ? sessionStorage : (win && win.sessionStorage));
+    const localStore = context.localStorage || (win && win.localStorage) || (typeof localStorage !== 'undefined' ? localStorage : null);
     const appConfig = context.APP_CONFIG || (typeof APP_CONFIG !== 'undefined' ? APP_CONFIG : (win && win.APP_CONFIG));
 
     // Estado da aplicação
@@ -18,7 +19,9 @@
       sector: null,
       allowedReports: [],
       reportsCache: {}, // { reportKey: { title, html } }
-      currentReportKey: null
+      currentReportKey: null,
+      assignments: {},
+      currentAssignSector: null
     };
 
     const KNOWN_REPORTS = [
@@ -129,7 +132,18 @@
       sidebarNavContainer: doc ? doc.getElementById('sidebarNavContainer') : null,
 
       viewerIframe: doc ? doc.getElementById('viewerIframe') : null,
-      viewerLoading: doc ? doc.getElementById('viewerLoading') : null
+      viewerLoading: doc ? doc.getElementById('viewerLoading') : null,
+
+      // Modal de Atribuição
+      assignModal: doc ? doc.getElementById('assignModal') : null,
+      assignModalTitle: doc ? doc.getElementById('assignModalTitle') : null,
+      assignSectorName: doc ? doc.getElementById('assignSectorName') : null,
+      btnCloseAssignModal: doc ? doc.getElementById('btnCloseAssignModal') : null,
+      assignRevisorInput: doc ? doc.getElementById('assignRevisorInput') : null,
+      assignStatusSelect: doc ? doc.getElementById('assignStatusSelect') : null,
+      btnClearAssignment: doc ? doc.getElementById('btnClearAssignment') : null,
+      btnCancelAssignment: doc ? doc.getElementById('btnCancelAssignment') : null,
+      btnSaveAssignment: doc ? doc.getElementById('btnSaveAssignment') : null
     };
 
     function initApp() {
@@ -145,7 +159,14 @@
         elements.btnFullscreen.addEventListener('click', toggleFullscreen);
       }
       if (elements.btnHamburger) {
-        elements.btnHamburger.addEventListener('click', toggleMobileSidebar);
+        elements.btnHamburger.addEventListener('click', () => {
+          const width = (win && typeof win.innerWidth === 'number') ? win.innerWidth : 1024;
+          if (width > 768) {
+            toggleSidebarDesktop();
+          } else {
+            toggleMobileSidebar();
+          }
+        });
       }
       if (elements.sidebarBackdrop) {
         elements.sidebarBackdrop.addEventListener('click', closeMobileSidebar);
@@ -156,6 +177,27 @@
             elements.authAlertError.classList.remove('active');
           }
           handleLogout();
+        });
+      }
+
+      // Modal de Atribuição listeners
+      if (elements.btnCloseAssignModal) {
+        elements.btnCloseAssignModal.addEventListener('click', closeAssignModal);
+      }
+      if (elements.btnCancelAssignment) {
+        elements.btnCancelAssignment.addEventListener('click', closeAssignModal);
+      }
+      if (elements.btnSaveAssignment) {
+        elements.btnSaveAssignment.addEventListener('click', saveAssignment);
+      }
+      if (elements.btnClearAssignment) {
+        elements.btnClearAssignment.addEventListener('click', clearAssignment);
+      }
+      if (elements.assignModal) {
+        elements.assignModal.addEventListener('click', (e) => {
+          if (e && e.target === elements.assignModal) {
+            closeAssignModal();
+          }
         });
       }
 
@@ -305,14 +347,21 @@
           elements.badgeRole.className = 'badge-role admin';
         }
         renderAdminSidebar(data.allowedReports || []);
-        if (elements.btnHamburger) elements.btnHamburger.style.display = '';
+        if (elements.btnHamburger) {
+          elements.btnHamburger.style.display = '';
+          elements.btnHamburger.classList.add('visible-desktop');
+        }
+        restoreSidebarPreference();
       } else {
         if (elements.badgeRole) {
           elements.badgeRole.textContent = 'Setor: ' + (state.sector || '');
           elements.badgeRole.className = 'badge-role sector';
         }
         if (elements.portalSidebar) elements.portalSidebar.style.display = 'none';
-        if (elements.btnHamburger) elements.btnHamburger.style.display = 'none';
+        if (elements.btnHamburger) {
+          elements.btnHamburger.style.display = 'none';
+          elements.btnHamburger.classList.remove('visible-desktop');
+        }
       }
     }
 
@@ -433,6 +482,21 @@
       if (elements.viewerIframe) {
         elements.viewerIframe.srcdoc = reportData.html;
         setTimeout(attachIframeClickInterceptor, 50);
+
+        if (reportKey === 'CONSOLIDADO') {
+          setTimeout(async () => {
+            const iframeDoc = elements.viewerIframe ? (
+              elements.viewerIframe.contentDocument ||
+              (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+            ) : null;
+            if (iframeDoc) {
+              if (state.role === 'admin') {
+                await fetchAssignments();
+              }
+              hydrateConsolidatedTable(iframeDoc, state.assignments);
+            }
+          }, 60);
+        }
       }
       setLoading(false);
     }
@@ -448,6 +512,11 @@
       state.allowedReports = [];
       state.reportsCache = {};
       state.currentReportKey = null;
+      state.assignments = {};
+      state.currentAssignSector = null;
+      if (elements.assignModal) {
+        elements.assignModal.style.display = 'none';
+      }
       if (elements.viewerIframe) {
         elements.viewerIframe.srcdoc = '';
       }
@@ -470,6 +539,30 @@
       if (elements.viewerLoading) {
         elements.viewerLoading.classList.toggle('active', isLoading);
       }
+    }
+
+    function toggleSidebarDesktop() {
+      if (!elements.portalSidebar) return false;
+      const isCollapsed = elements.portalSidebar.classList.toggle('collapsed');
+      try {
+        const ls = localStore || (win && win.localStorage);
+        if (ls) {
+          ls.setItem('pdi_sidebar_collapsed', isCollapsed ? 'true' : 'false');
+        }
+      } catch (e) {}
+      return isCollapsed;
+    }
+
+    function restoreSidebarPreference() {
+      try {
+        const ls = localStore || (win && win.localStorage);
+        const width = (win && typeof win.innerWidth === 'number') ? win.innerWidth : 1024;
+        if (ls && ls.getItem('pdi_sidebar_collapsed') === 'true' && width > 768) {
+          if (elements.portalSidebar) {
+            elements.portalSidebar.classList.add('collapsed');
+          }
+        }
+      } catch (e) {}
     }
 
     function toggleMobileSidebar() {
@@ -506,6 +599,211 @@
       }
     }
 
+    function renderStatusBadge(status) {
+      const s = (status || 'PENDENTE').toUpperCase().trim();
+      if (s === 'CONCLUIDO') {
+        return '<span class="tag tag-concluido">Concluído</span>';
+      }
+      if (s === 'EM_VALIDACAO') {
+        return '<span class="tag tag-em-validacao">Em Validação</span>';
+      }
+      if (s === 'EM_REVISAO') {
+        return '<span class="tag tag-em-revisao">Em Revisão</span>';
+      }
+      return '<span class="tag tag-pendente">Pendente</span>';
+    }
+
+    async function fetchAssignments() {
+      if (!state.idToken) return state.assignments || {};
+      try {
+        const fetchFn = (win && win.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
+        const webUrl = appConfig ? appConfig.webAppUrl : '';
+        const res = await fetchFn(webUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ idToken: state.idToken, action: 'GET_ASSIGNMENTS' })
+        });
+        const data = await res.json();
+        if (data && data.success && data.assignments) {
+          state.assignments = data.assignments;
+          return state.assignments;
+        }
+      } catch (err) {
+        // Silencioso em caso de erro de rede ou mock
+      }
+      return state.assignments || {};
+    }
+
+    function hydrateConsolidatedTable(iframeDoc, assignments) {
+      if (!iframeDoc) return;
+      const currentAssignments = assignments || state.assignments || {};
+      const rows = iframeDoc.querySelectorAll ? iframeDoc.querySelectorAll('tr[data-setor]') : [];
+      if (!rows || rows.length === 0) return;
+
+      rows.forEach(row => {
+        const setor = row.getAttribute ? row.getAttribute('data-setor') : null;
+        if (!setor) return;
+
+        const info = currentAssignments[setor];
+        const revisor = (info && info.revisor) ? info.revisor : '—';
+        const assignedBy = (info && info.assignedBy) ? info.assignedBy : '—';
+        const status = (info && info.status) ? info.status : 'PENDENTE';
+
+        const revCell = row.querySelector ? row.querySelector('[data-cell="revisor"]') : null;
+        if (revCell) revCell.textContent = revisor;
+
+        const byCell = row.querySelector ? row.querySelector('[data-cell="atribuido-por"]') : null;
+        if (byCell) byCell.textContent = assignedBy;
+
+        const statusCell = row.querySelector ? row.querySelector('[data-cell="status"]') : null;
+        if (statusCell) {
+          statusCell.innerHTML = renderStatusBadge(status);
+        }
+
+        // Se o usuário autenticado for admin, injeta botão interativo no slot da ação
+        if (state.role === 'admin') {
+          const slot = row.querySelector ? (
+            row.querySelector('.btn-assign-slot[data-setor="' + setor + '"]') ||
+            row.querySelector('.btn-assign-slot') ||
+            row.querySelector('[data-cell="acao"]')
+          ) : null;
+
+          if (slot) {
+            const hasAssignment = !!(info && info.revisor);
+            slot.innerHTML = '';
+            const btn = (iframeDoc && iframeDoc.createElement)
+              ? iframeDoc.createElement('button')
+              : (doc && doc.createElement ? doc.createElement('button') : null);
+            if (btn) {
+              btn.type = 'button';
+              btn.className = 'btn-assign-action' + (hasAssignment ? ' edit' : '');
+              btn.textContent = hasAssignment ? 'Editar Atribuição' : 'Atribuir';
+              btn.addEventListener('click', (e) => {
+                if (e && e.preventDefault) e.preventDefault();
+                if (e && e.stopPropagation) e.stopPropagation();
+                openAssignModal(setor);
+              });
+              slot.appendChild(btn);
+            }
+          }
+        }
+      });
+    }
+
+    function openAssignModal(setor) {
+      if (!setor) return;
+      state.currentAssignSector = setor;
+      if (elements.assignSectorName) {
+        elements.assignSectorName.textContent = setor;
+      }
+      const current = (state.assignments && state.assignments[setor]) || {};
+      if (elements.assignRevisorInput) {
+        elements.assignRevisorInput.value = current.revisor || '';
+      }
+      if (elements.assignStatusSelect) {
+        elements.assignStatusSelect.value = current.status || 'PENDENTE';
+      }
+      if (elements.assignModal) {
+        elements.assignModal.style.display = 'flex';
+      }
+    }
+
+    function closeAssignModal() {
+      state.currentAssignSector = null;
+      if (elements.assignModal) {
+        elements.assignModal.style.display = 'none';
+      }
+    }
+
+    async function saveAssignment() {
+      const setor = state.currentAssignSector;
+      if (!setor) return;
+
+      const revisor = elements.assignRevisorInput ? elements.assignRevisorInput.value.trim() : '';
+      const status = elements.assignStatusSelect ? elements.assignStatusSelect.value : 'PENDENTE';
+
+      try {
+        const fetchFn = (win && win.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
+        const webUrl = appConfig ? appConfig.webAppUrl : '';
+        const res = await fetchFn(webUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            idToken: state.idToken,
+            action: 'SET_ASSIGNMENT',
+            setor: setor,
+            revisor: revisor,
+            status: status
+          })
+        });
+        const data = await res.json();
+        if (data && !data.success) {
+          const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
+          alertFn(data.error || 'Erro ao processar atribuição.');
+          return;
+        }
+        if (data && data.success && data.assignments) {
+          state.assignments = data.assignments;
+        }
+      } catch (err) {
+        const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
+        alertFn('Erro ao salvar atribuição: ' + err.message);
+      } finally {
+        closeAssignModal();
+        const iframeDoc = elements.viewerIframe ? (
+          elements.viewerIframe.contentDocument ||
+          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+        ) : null;
+        if (iframeDoc) {
+          hydrateConsolidatedTable(iframeDoc, state.assignments);
+        }
+      }
+    }
+
+    async function clearAssignment() {
+      const setor = state.currentAssignSector;
+      if (!setor) return;
+
+      try {
+        const fetchFn = (win && win.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
+        const webUrl = appConfig ? appConfig.webAppUrl : '';
+        const res = await fetchFn(webUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            idToken: state.idToken,
+            action: 'SET_ASSIGNMENT',
+            setor: setor,
+            revisor: '',
+            status: 'PENDENTE'
+          })
+        });
+        const data = await res.json();
+        if (data && !data.success) {
+          const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
+          alertFn(data.error || 'Erro ao processar atribuição.');
+          return;
+        }
+        if (data && data.success && data.assignments) {
+          state.assignments = data.assignments;
+        } else if (data && data.success && state.assignments) {
+          delete state.assignments[setor];
+        }
+      } catch (err) {
+        const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
+        alertFn('Erro ao remover atribuição: ' + err.message);
+      } finally {
+        closeAssignModal();
+        const iframeDoc = elements.viewerIframe ? (
+          elements.viewerIframe.contentDocument ||
+          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+        ) : null;
+        if (iframeDoc) {
+          hydrateConsolidatedTable(iframeDoc, state.assignments);
+        }
+      }
+    }
+
     return {
       state,
       elements,
@@ -524,13 +822,23 @@
       handleLogout,
       showAuthError,
       setLoading,
+      toggleSidebarDesktop,
+      toggleDesktopSidebar: toggleSidebarDesktop,
+      restoreSidebarPreference,
       toggleMobileSidebar,
       closeMobileSidebar,
       toggleFullscreen,
       extractReportKey,
       isValidReportKey,
       handleWindowMessage,
-      attachIframeClickInterceptor
+      attachIframeClickInterceptor,
+      renderStatusBadge,
+      fetchAssignments,
+      hydrateConsolidatedTable,
+      openAssignModal,
+      closeAssignModal,
+      saveAssignment,
+      clearAssignment
     };
   }
 
@@ -540,6 +848,7 @@
       document: document,
       window: window,
       sessionStorage: typeof sessionStorage !== 'undefined' ? sessionStorage : null,
+      localStorage: typeof localStorage !== 'undefined' ? localStorage : null,
       APP_CONFIG: typeof APP_CONFIG !== 'undefined' ? APP_CONFIG : window.APP_CONFIG
     });
     window.Portal = portalInstance;

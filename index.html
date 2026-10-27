@@ -94,6 +94,35 @@
     </div>
   </div>
 
+  <!-- Modal de Atribuição de Revisão de Dossiês -->
+  <div id="assignModal" class="pdi-modal-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="assignModalTitle">
+    <div class="pdi-modal-card">
+      <div class="pdi-modal-header">
+        <h3 id="assignModalTitle">Atribuir Revisão — Setor <span id="assignSectorName"></span></h3>
+        <button id="btnCloseAssignModal" class="btn-close-modal" aria-label="Fechar">&times;</button>
+      </div>
+      <div class="pdi-modal-body">
+        <label for="assignRevisorInput">Nome do Responsável:</label>
+        <input type="text" id="assignRevisorInput" placeholder="Ex: Mariana, Lucas Palitot" class="pdi-input" />
+
+        <label for="assignStatusSelect">Status da Revisão:</label>
+        <select id="assignStatusSelect" class="pdi-select">
+          <option value="PENDENTE">Pendente</option>
+          <option value="EM_REVISAO">Em Revisão</option>
+          <option value="EM_VALIDACAO">Em Validação</option>
+          <option value="CONCLUIDO">Concluído</option>
+        </select>
+      </div>
+      <div class="pdi-modal-footer">
+        <button id="btnClearAssignment" class="btn-modal secondary danger">Remover Atribuição</button>
+        <div class="footer-actions-right">
+          <button id="btnCancelAssignment" class="btn-modal secondary">Cancelar</button>
+          <button id="btnSaveAssignment" class="btn-modal primary">Salvar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts da Aplicação -->
   <script src="config.js"></script>
   <script src="assets/js/portal.js"></script>
