@@ -21,8 +21,46 @@
       reportsCache: {}, // { reportKey: { title, html } }
       currentReportKey: null,
       assignments: {},
-      currentAssignSector: null
+      currentAssignSector: null,
+      pendingAction: null
     };
+
+    function parseJwt(token) {
+      try {
+        if (!token || typeof token !== 'string') return null;
+        const parts = token.split('.');
+        if (parts.length < 2) return null;
+        const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+          (typeof atob === 'function' ? atob(base64) : Buffer.from(base64, 'base64').toString('binary'))
+            .split('')
+            .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join('')
+        );
+        return JSON.parse(jsonPayload);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function isTokenExpired(token) {
+      const payload = parseJwt(token);
+      if (!payload || !payload.exp) return true;
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      return payload.exp <= nowSeconds;
+    }
+
+    function isAuthExpiredResponse(data) {
+      if (!data) return false;
+      if (data.code === 401) return true;
+      if (typeof data.error === 'string') {
+        const errLower = data.error.toLowerCase();
+        if (errLower.includes('expirado') || errLower.includes('token inválido') || errLower.includes('token invalido')) {
+          return true;
+        }
+      }
+      return false;
+    }
 
     const KNOWN_REPORTS = [
       'CONSOLIDADO', 'METODOLOGIA',
@@ -143,7 +181,13 @@
       assignStatusSelect: doc ? doc.getElementById('assignStatusSelect') : null,
       btnClearAssignment: doc ? doc.getElementById('btnClearAssignment') : null,
       btnCancelAssignment: doc ? doc.getElementById('btnCancelAssignment') : null,
-      btnSaveAssignment: doc ? doc.getElementById('btnSaveAssignment') : null
+      btnSaveAssignment: doc ? doc.getElementById('btnSaveAssignment') : null,
+
+      // Modal de Sessão Expirada
+      sessionExpiredModal: doc ? doc.getElementById('sessionExpiredModal') : null,
+      sessionExpiredTitle: doc ? doc.getElementById('sessionExpiredTitle') : null,
+      gisButtonSessionExpired: doc ? doc.getElementById('gisButtonSessionExpired') : null,
+      btnCancelSessionExpired: doc ? doc.getElementById('btnCancelSessionExpired') : null
     };
 
     function initApp() {
@@ -201,6 +245,16 @@
         });
       }
 
+      // Modal de Sessão Expirada listeners
+      if (elements.btnCancelSessionExpired) {
+        elements.btnCancelSessionExpired.addEventListener('click', () => {
+          if (elements.sessionExpiredModal) {
+            elements.sessionExpiredModal.style.display = 'none';
+          }
+          handleLogout();
+        });
+      }
+
       // Sincronização de navegação pelo histórico (botão Voltar/Avançar do navegador)
       if (win && win.addEventListener) {
         win.addEventListener('popstate', () => {
@@ -222,7 +276,7 @@
     }
 
     function checkExistingSession() {
-      const savedToken = storage ? storage.getItem('pdi_id_token') : null;
+      const savedToken = storage ? (storage.getItem('pdi_id_token') || storage.getItem('idToken')) : null;
       if (savedToken) {
         state.idToken = savedToken;
         loadInitialPortalData();
@@ -267,8 +321,51 @@
       state.idToken = response.credential;
       if (storage) {
         storage.setItem('pdi_id_token', state.idToken);
+        storage.setItem('idToken', state.idToken);
       }
       loadInitialPortalData();
+    }
+
+    function showSessionExpiredModal(pendingRetryFn) {
+      state.pendingAction = typeof pendingRetryFn === 'function' ? pendingRetryFn : null;
+      if (elements.sessionExpiredModal) {
+        elements.sessionExpiredModal.style.display = 'flex';
+      }
+
+      const googleObj = (win && win.google) || (typeof google !== 'undefined' ? google : null);
+      if (googleObj && googleObj.accounts && googleObj.accounts.id) {
+        googleObj.accounts.id.initialize({
+          client_id: appConfig ? appConfig.googleClientId : '',
+          callback: handleSessionRenewed,
+          auto_select: false
+        });
+
+        if (elements.gisButtonSessionExpired) {
+          googleObj.accounts.id.renderButton(
+            elements.gisButtonSessionExpired,
+            { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', width: 280 }
+          );
+        }
+      }
+    }
+
+    function handleSessionRenewed(response) {
+      if (!response || !response.credential) {
+        return;
+      }
+      state.idToken = response.credential;
+      if (storage) {
+        storage.setItem('pdi_id_token', response.credential);
+        storage.setItem('idToken', response.credential);
+      }
+      if (elements.sessionExpiredModal) {
+        elements.sessionExpiredModal.style.display = 'none';
+      }
+      if (typeof state.pendingAction === 'function') {
+        const retry = state.pendingAction;
+        state.pendingAction = null;
+        retry();
+      }
     }
 
     async function loadInitialPortalData() {
@@ -298,9 +395,14 @@
 
         if (!data.success) {
           setLoading(false);
+          if (isAuthExpiredResponse(data)) {
+            showSessionExpiredModal(() => loadInitialPortalData());
+            return;
+          }
           showAuthError(data.error || 'Acesso não autorizado.');
           if (storage) {
             storage.removeItem('pdi_id_token');
+            storage.removeItem('idToken');
           }
           return;
         }
@@ -331,6 +433,7 @@
         showAuthError('Erro ao comunicar com o servidor de auditoria: ' + err.message);
         if (storage) {
           storage.removeItem('pdi_id_token');
+          storage.removeItem('idToken');
         }
       }
     }
@@ -454,9 +557,12 @@
         });
         const data = await res.json();
         if (!data.success) {
+          if (isAuthExpiredResponse(data)) {
+            showSessionExpiredModal(() => switchReport(normalizedKey));
+            return;
+          }
           const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
           alertFn(data.error || 'Erro ao carregar relatório.');
-          setLoading(false);
           return;
         }
 
@@ -520,6 +626,7 @@
     function handleLogout() {
       if (storage) {
         storage.removeItem('pdi_id_token');
+        storage.removeItem('idToken');
       }
       state.idToken = null;
       state.userEmail = null;
@@ -530,6 +637,10 @@
       state.currentReportKey = null;
       state.assignments = {};
       state.currentAssignSector = null;
+      state.pendingAction = null;
+      if (elements.sessionExpiredModal) {
+        elements.sessionExpiredModal.style.display = 'none';
+      }
       if (elements.assignModal) {
         elements.assignModal.style.display = 'none';
       }
@@ -640,6 +751,10 @@
           body: JSON.stringify({ idToken: state.idToken, action: 'GET_ASSIGNMENTS' })
         });
         const data = await res.json();
+        if (data && !data.success && isAuthExpiredResponse(data)) {
+          showSessionExpiredModal(() => fetchAssignments());
+          return state.assignments || {};
+        }
         if (data && data.success && data.assignments) {
           state.assignments = data.assignments;
           return state.assignments;
@@ -764,6 +879,7 @@
 
       const revisor = elements.assignRevisorInput ? elements.assignRevisorInput.value.trim() : '';
       const status = elements.assignStatusSelect ? elements.assignStatusSelect.value : 'PENDENTE';
+      let isExpired = false;
 
       try {
         const fetchFn = (win && win.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
@@ -781,6 +897,11 @@
         });
         const data = await res.json();
         if (data && !data.success) {
+          if (isAuthExpiredResponse(data)) {
+            isExpired = true;
+            showSessionExpiredModal(() => saveAssignment());
+            return;
+          }
           const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
           alertFn(data.error || 'Erro ao processar atribuição.');
           return;
@@ -792,13 +913,15 @@
         const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
         alertFn('Erro ao salvar atribuição: ' + err.message);
       } finally {
-        closeAssignModal();
-        const iframeDoc = elements.viewerIframe ? (
-          elements.viewerIframe.contentDocument ||
-          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
-        ) : null;
-        if (iframeDoc) {
-          hydrateConsolidatedTable(iframeDoc, state.assignments);
+        if (!isExpired) {
+          closeAssignModal();
+          const iframeDoc = elements.viewerIframe ? (
+            elements.viewerIframe.contentDocument ||
+            (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+          ) : null;
+          if (iframeDoc) {
+            hydrateConsolidatedTable(iframeDoc, state.assignments);
+          }
         }
       }
     }
@@ -806,6 +929,7 @@
     async function clearAssignment() {
       const setor = state.currentAssignSector;
       if (!setor) return;
+      let isExpired = false;
 
       try {
         const fetchFn = (win && win.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
@@ -823,6 +947,11 @@
         });
         const data = await res.json();
         if (data && !data.success) {
+          if (isAuthExpiredResponse(data)) {
+            isExpired = true;
+            showSessionExpiredModal(() => clearAssignment());
+            return;
+          }
           const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
           alertFn(data.error || 'Erro ao processar atribuição.');
           return;
@@ -837,13 +966,15 @@
         const alertFn = (win && win.alert) || (typeof alert !== 'undefined' ? alert : console.error);
         alertFn('Erro ao remover atribuição: ' + err.message);
       } finally {
-        closeAssignModal();
-        const iframeDoc = elements.viewerIframe ? (
-          elements.viewerIframe.contentDocument ||
-          (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
-        ) : null;
-        if (iframeDoc) {
-          hydrateConsolidatedTable(iframeDoc, state.assignments);
+        if (!isExpired) {
+          closeAssignModal();
+          const iframeDoc = elements.viewerIframe ? (
+            elements.viewerIframe.contentDocument ||
+            (elements.viewerIframe.contentWindow && elements.viewerIframe.contentWindow.document)
+          ) : null;
+          if (iframeDoc) {
+            hydrateConsolidatedTable(iframeDoc, state.assignments);
+          }
         }
       }
     }
@@ -882,7 +1013,12 @@
       openAssignModal,
       closeAssignModal,
       saveAssignment,
-      clearAssignment
+      clearAssignment,
+      parseJwt,
+      isTokenExpired,
+      isAuthExpiredResponse,
+      showSessionExpiredModal,
+      handleSessionRenewed
     };
   }
 

@@ -123,6 +123,26 @@
     </div>
   </div>
 
+  <!-- Modal de Sessão Expirada (Reconexão In-Place) -->
+  <div id="sessionExpiredModal" class="pdi-modal-backdrop" style="display: none; z-index: 120;" role="dialog" aria-modal="true" aria-labelledby="sessionExpiredTitle">
+    <div class="pdi-modal-card" style="max-width: 420px; text-align: center;">
+      <div class="pdi-modal-header" style="justify-content: center;">
+        <h3 id="sessionExpiredTitle">Sessão Expirada</h3>
+      </div>
+      <div class="pdi-modal-body" style="align-items: center; gap: 16px; padding: 24px;">
+        <div style="font-size: 38px;">⏱️</div>
+        <p style="font-size: 13.5px; color: var(--color-text-main); margin: 0; line-height: 1.5;">
+          Sua sessão expirou por tempo de inatividade.<br>
+          Confirme sua conta institucional para continuar de onde você parou.
+        </p>
+        <div id="gisButtonSessionExpired" style="margin-top: 8px;"></div>
+      </div>
+      <div class="pdi-modal-footer" style="justify-content: center; background: #f8fafc;">
+        <button id="btnCancelSessionExpired" class="btn-modal secondary" style="font-size: 12.5px;">Encerrar e Sair</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts da Aplicação -->
   <script src="config.js"></script>
   <script src="assets/js/portal.js"></script>
