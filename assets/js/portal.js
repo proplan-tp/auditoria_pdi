@@ -362,6 +362,15 @@
       if (elements.sessionExpiredModal) {
         elements.sessionExpiredModal.style.display = 'none';
       }
+
+      const payload = parseJwt(response.credential);
+      if (payload && payload.email && state.userEmail && payload.email.toLowerCase() !== state.userEmail.toLowerCase()) {
+        state.userEmail = payload.email;
+        state.pendingAction = null;
+        loadInitialPortalData();
+        return;
+      }
+
       if (typeof state.pendingAction === 'function') {
         const retry = state.pendingAction;
         state.pendingAction = null;
@@ -695,6 +704,7 @@
 
     function toggleMobileSidebar() {
       if (elements.portalSidebar) {
+        elements.portalSidebar.classList.remove('collapsed');
         elements.portalSidebar.classList.toggle('open');
       }
       if (elements.sidebarBackdrop) {

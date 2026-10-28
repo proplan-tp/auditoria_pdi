@@ -248,18 +248,6 @@ body {
   transition: width 0.25s ease, opacity 0.2s ease, transform 0.25s ease;
 }
 
-.portal-sidebar.collapsed {
-  width: 0 !important;
-  min-width: 0 !important;
-  max-width: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border-right: none !important;
-  overflow: hidden !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
 .sidebar-group-title {
   font-size: 11px;
   font-weight: 700;
@@ -388,6 +376,18 @@ body {
   .btn-hamburger,
   .btn-hamburger.visible-desktop {
     display: inline-flex !important;
+  }
+
+  .portal-sidebar.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-right: none !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
   }
 }
 
